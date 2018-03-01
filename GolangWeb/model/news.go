@@ -1,66 +1,99 @@
 package model
+
 import (
-"time"
-"crypto/rand"
-"encoding/base64"
-"sync"
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"sync"
+	"time"
+
+	"gopkg.in/mgo.v2/bson"
 )
-type News struct{
-	ID string
-	Title string
-	Image string
-	Detail string
-	CreatedAt time.Time
-	UpdateAt time.Time
+
+type News struct {
+	ID        bson.ObjectId `bson:"_id"`
+	Title     string
+	Image     string
+	Detail    string
+	CreatedAt time.Time `bson:"createdAt"`
+	UpdateAt  time.Time `bson:"updatedAt"`
 }
 
 var (
 	newsStorage []News
-	mutexNews sync.Mutex
+	mutexNews   sync.Mutex
 	//lastNewsID int
 )
-func genarateID() string{
+
+func genarateID() string {
 	buf := make([]byte, 16)
 	rand.Read(buf)
 	return base64.StdEncoding.EncodeToString(buf)
 }
-func CreateNews(news News) {
-		news.ID  =genarateID()
-		news.CreatedAt = time.Now()
-		news.UpdateAt = news.CreatedAt
-		mutexNews.Lock()
-		defer mutexNews.Unlock()
- 		newsStorage = append(newsStorage, news)
+func CreateNews(news News) error {
+	news.ID = bson.NewObjectId()
+	news.CreatedAt = time.Now()
+	news.UpdateAt = news.CreatedAt
+	s := mongoSession.Copy()
+	defer s.Close()
+	err := s.DB(database).C("news").Insert(&news)
+	if err != nil {
+		return err
+	}
+	return nil
 
 }
-func ListNews() []*News{
-		mutexNews.Lock()
-		defer mutexNews.Unlock()
-		r := make([]*News, len(newsStorage))
-		for i := range newsStorage{
-			n := newsStorage[i]
-			r[i] = &n
-		}
-	return r
+func ListNews() ([]*News, error) {
+	s := mongoSession.Copy()
+	defer s.Close()
+	var news []*News
+	err := s.DB(database).C("news").Find(nil).All(&news)
+	if err != nil {
+		return nil, err
+	}
+	return news, nil
+
 }
-func GetNews(id string) *News {
-	mutexNews.Lock()
-		defer mutexNews.Unlock()
-	for _, news := range newsStorage{
-		if news.ID == id{
-			n := news
-			return &n
-		}
+func GetNews(id string) (*News, error) {
+	if !bson.IsObjectIdHex(id) {
+		return nil, fmt.Errorf("invalid id")
+	}
+	objectID := bson.ObjectIdHex(id)
+
+	s := mongoSession.Copy()
+	defer s.Close()
+	var n News
+	err := s.DB(database).C("news").FindId(objectID).One(&n)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+
+}
+func DeleteNews(id string) error {
+
+	if !bson.IsObjectIdHex(id) {
+		return fmt.Errorf("invalid id")
+	}
+	objectID := bson.ObjectIdHex(id)
+	s := mongoSession.Copy()
+	defer s.Close()
+	err := s.DB(database).C("news").RemoveId(objectID)
+	if err != nil {
+		return err
 	}
 	return nil
 }
-func DeleteNews(id string) {
-		mutexNews.Lock()
-		defer mutexNews.Unlock()
-	for i, news := range newsStorage{
-		if news.ID == id{
-			newsStorage = append(newsStorage[:i], newsStorage[i+1:]...)
-			return
-		}
+func UpdateNews(news *News) error {
+	if news.ID == "" {
+		return fmt.Errorf("required id to update")
 	}
+	news.UpdateAt = time.Now()
+	s := mongoSession.Copy()
+	defer s.Close()
+	err := s.DB(database).C("news").UpdateId(news.ID, news)
+	if err != nil {
+		return err
+	}
+	return nil
 }
